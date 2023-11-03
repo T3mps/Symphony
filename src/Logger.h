@@ -58,7 +58,8 @@ namespace Symphony
          GetInstance().m_logger = newLogger;
       }
 
-      static ILogger& GetLogger() {
+      static ILogger& GetLogger()
+      {
          return *(GetInstance().m_logger);
       }
 
