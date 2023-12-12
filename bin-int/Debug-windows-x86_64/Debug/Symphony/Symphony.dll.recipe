@@ -2,7 +2,7 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>C:\dev\Symphony\bin\Debug-windows-x86_64\Symphony.dll</FullPath>
+      <FullPath>D:\dev\Symphony\bin\Debug-windows-x86_64\Symphony.dll</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
   <ContentFiles />

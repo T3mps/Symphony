@@ -10,13 +10,6 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="src\Common.h" />
-    <ClInclude Include="src\Container\IndirectionTable.h" />
-    <ClInclude Include="src\Container\SparseSet.h" />
-    <ClInclude Include="src\Logger.h" />
-    <ClInclude Include="src\Util\YCombinator.h" />
-  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{6CF9B97D-58C6-1489-81DF-02316D0B4A17}</ProjectGuid>
     <IgnoreWarnCompileDuplicatedFilename>true</IgnoreWarnCompileDuplicatedFilename>
@@ -103,6 +96,15 @@
       <ImportLibrary>..\bin\Release-windows-x86_64\Symphony.lib</ImportLibrary>
     </Link>
   </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Common.h" />
+    <ClInclude Include="src\Container\DenseArray.h" />
+    <ClInclude Include="src\Container\PackedArray.h" />
+    <ClInclude Include="src\Container\SparseSet.h" />
+    <ClInclude Include="src\Logger.h" />
+    <ClInclude Include="src\Util\Exception.h" />
+    <ClInclude Include="src\Util\YCombinator.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

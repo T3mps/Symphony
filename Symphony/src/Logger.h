@@ -23,6 +23,7 @@ namespace Symphony
    {
    public:
       virtual ~ILogger() = default;
+
       virtual void Log(LogLevel level, std::string_view message, const std::source_location& location = std::source_location::current()) = 0;
    };
 

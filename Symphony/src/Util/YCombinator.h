@@ -8,8 +8,8 @@ namespace Symphony
    template<typename Func>
    class YCombinator
    {
-      constexpr YCombinator(Func recursive) noexcept(std::is_nothrow_move_constructible_v<Func>)
-         : m_lambda(std::move(recursive))
+      constexpr YCombinator(Func recursive) noexcept(std::is_nothrow_move_constructible_v<Func>) :
+         m_lambda(std::move(recursive))
       {}
 
       template<typename... Args>

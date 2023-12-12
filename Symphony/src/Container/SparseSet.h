@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <memory>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -15,70 +16,71 @@ namespace Symphony
 {
    class Bucket;
 
-   template<typename _Key = Entity, typename _Value = size_t, typename _KeyAlloc = std::allocator<_Key>, typename _BucketAlloc = std::allocator<Bucket>>
-   requires Allocator<_KeyAlloc>&& Allocator<_BucketAlloc>
-      class SparseSet
+   template<typename Key = Entity, typename Value = size_t, typename KeyAlloc = std::allocator<Key>, typename BucketAlloc = std::allocator<Bucket>>
+   requires Allocator<KeyAlloc> && Allocator<BucketAlloc>
+   class SparseSet
    {
-      static_assert(std::is_arithmetic_v<_Key>, "SparseSet: Key type must be a primitive type.");
-      static_assert(std::is_arithmetic_v<_Value>, "SparseSet: Value type must be a primitive type.");
+      static_assert(std::is_arithmetic_v<Key>, "SparseSet: Key type must be a primitive type.");
+      static_assert(std::is_arithmetic_v<Value>, "SparseSet: Value type must be a primitive type.");
+
+      static constexpr size_t SPARSE_BUCKET_SHIFT = 10;
+      static constexpr size_t SPARSE_BUCKET_SIZE = 1 << SPARSE_BUCKET_SHIFT;
 
       class Bucket
       {
       public:
-         Bucket() :
-            m_size(0)
+         Bucket() : m_size(0)
          {
-            size_t alignment = std::max(alignof(_Key), alignof(_Value));
-            m_data = static_cast<char*>(std::aligned_alloc(alignment, SPARSE_BUCKET_SIZE * (sizeof(_Key) + sizeof(_Value))));
-            m_keys = reinterpret_cast<_Key*>(m_data);
-            m_values = reinterpret_cast<_Value*>(m_data + SPARSE_BUCKET_SIZE * sizeof(_Key));
+            size_t alignment = std::max(alignof(Key), alignof(Value));
+            
+            m_data = static_cast<char*>(_aligned_malloc(SPARSE_BUCKET_SIZE * (sizeof(Key) + sizeof(Value)), alignment));
+            m_keys = reinterpret_cast<Key*>(m_data);
+            m_values = reinterpret_cast<Value*>(m_data + SPARSE_BUCKET_SIZE * sizeof(Key));
          }
 
          ~Bucket()
          {
-            std::aligned_free(m_data);
+            _aligned_free(m_data);
             m_keys = nullptr;
             m_values = nullptr;
          }
 
-         inline void Deallocate(_BucketAlloc* allocator)
+         inline void Deallocate(BucketAlloc* allocator)
          {
             if (m_keys || m_values) [[unlikely]]
-            {
-                  return;
-            }
-               if (allocator) [[likely]]
-               {
-                     allocator->deallocate(this);
-               }
+               return;
+
+            if (allocator) [[likely]]
+               allocator->deallocate(this);
          }
 
-         void* operator new(size_t size, _BucketAlloc& pool) { return pool.allocate(size); }
+         void* operator new(size_t size, BucketAlloc& pool) { return pool.allocate(size); }
 
-         void operator delete(void* p, _BucketAlloc& pool) { pool.deallocate(p); }
+         void operator delete(void* p, BucketAlloc& pool) { pool.deallocate(p); }
 
-         inline bool Contains(_Key key) const { return std::binary_search(m_keys, m_keys + m_size, key); }
+         inline bool Contains(Key key) const { return std::binary_search(m_keys, m_keys + m_size, key); }
 
-         [[nodiscard]] inline std::optional<_Value> Value(_Key key) const
+         [[nodiscard]] inline std::optional<Value> Value(Key key) const
          {
             auto it = std::lower_bound(m_keys, m_keys + m_size, key);
-            if (it != m_keys + m_size && *it == key)
-            {
+            if (it && (it != m_keys + m_size && *it == key))
                return m_values[std::distance(m_keys, it)];
-            }
             return std::nullopt;
          }
 
-         inline bool Insert(_Key key, _Value value)
+         inline bool Insert(Key key, Value value)
          {
-            if (m_size >= SPARSE_BUCKET_SIZE) [[unlikely]] return false;
+            if (m_size >= SPARSE_BUCKET_SIZE) [[unlikely]]
+               return false;
 
             auto it = std::lower_bound(m_keys, m_keys + m_size, key);
-            auto index = it - m_keys;
+            if (!it)
+               return false;
+            auto index = std::distance(m_keys, it);
 
             // Shift keys and values to make space for the new k/v pair
-            std::memmove(&m_keys[index + 1], &m_keys[index], (m_size - index) * sizeof(_Key));
-            std::memmove(&m_values[index + 1], &m_values[index], (m_size - index) * sizeof(_Value));
+            std::memmove(&m_keys[index + 1], &m_keys[index], (m_size - index) * sizeof(Key));
+            std::memmove(&m_values[index + 1], &m_values[index], (m_size - index) * sizeof(Value));
 
             m_keys[index] = key;
             m_values[index] = value;
@@ -86,23 +88,25 @@ namespace Symphony
             return true;
          }
 
-         inline void Remove(_Key key)
+         inline void Remove(Key key)
          {
             auto it = std::lower_bound(m_keys, m_keys + m_size, key);
-            if (it == m_keys + m_size || *it != key) [[unlikely]] return;
+            if (!it || it == m_keys + m_size || *it != key)
+               return;
 
-            auto index = it - m_keys;
+            auto index = std::distance(m_keys, it);
 
             // Shift keys and values to cover up the gap left by the removed k/v pair
-            std::memmove(&m_keys[index], &m_keys[index + 1], (m_size - index - 1) * sizeof(_Key));
-            std::memmove(&m_values[index], &m_values[index + 1], (m_size - index - 1) * sizeof(_Value));
+            std::memmove(&m_keys[index], &m_keys[index + 1], (m_size - index - 1) * sizeof(Key));
+            std::memmove(&m_values[index], &m_values[index + 1], (m_size - index - 1) * sizeof(Value));
 
             --m_size;
          }
 
          void Distribute(Bucket& other)
          {
-            if (other == *this) return;
+            if (other == *this)
+               return;
 
             size_t mid = m_size >> 1;
 
@@ -116,7 +120,8 @@ namespace Symphony
 
          void Merge(Bucket& other)
          {
-            if (other == *this) return;
+            if (other == *this)
+               return;
 
             // Move all keys & values from other to the end of this bucket
             std::move(other.m_keys, other.m_keys + other.m_size, m_keys + m_size);
@@ -126,7 +131,8 @@ namespace Symphony
 
          void Rebalance(Bucket& other)
          {
-            if (other == *this) return;
+            if (other == *this)
+               return;
 
             size_t totalSize = m_size + other.m_size;
             size_t targetSize = totalSize >> 1;
@@ -167,20 +173,20 @@ namespace Symphony
 
       private:
          char* m_data;
-         _Key* m_keys;
-         _Value* m_values;
+         Key* m_keys;
+         Value* m_values;
          size_t m_size;
       };
 
-      using EntityAllocatorType = std::allocator_traits<_KeyAlloc>::template rebind_alloc<_Key>;
-      using BucketAllocatorType = std::allocator_traits<_BucketAlloc>::template rebind_alloc<Bucket>;
+      using EntityAllocatorType = std::allocator_traits<KeyAlloc>::template rebind_alloc<Key>;
+      using BucketAllocatorType = std::allocator_traits<BucketAlloc>::template rebind_alloc<Bucket>;
 
    public:
       class Iterator
       {
       public:
          using iterator_category = std::bidirectional_iterator_tag;
-         using value_type = std::pair<_Key, _Value>;
+         using value_type = std::pair<Key, Value>;
          using difference_type = std::ptrdiff_t;
          using pointer = value_type*;
          using reference = value_type&;
@@ -202,6 +208,7 @@ namespace Symphony
             ++m_sparsePtr;
             return *this;
          }
+
          Iterator operator++(int)
          {
             Iterator tmp(*this);
@@ -215,6 +222,7 @@ namespace Symphony
             --m_sparsePtr;
             return *this;
          }
+
          Iterator operator--(int)
          {
             Iterator tmp(*this);
@@ -236,6 +244,7 @@ namespace Symphony
             m_sparsePtr += n;
             return *this;
          }
+
          Iterator& operator-=(difference_type n)
          {
             m_densePtr -= n;
@@ -249,25 +258,24 @@ namespace Symphony
          bool operator>=(const Iterator& rhs) const { return m_densePtr >= rhs.m_densePtr; }
 
       private:
-         Iterator(_Key* densePtr, _Value* sparsePtr) :
+         Iterator(Key* densePtr, Value* sparsePtr) :
             m_densePtr(densePtr),
             m_sparsePtr(sparsePtr)
-         {
-         }
+         {}
 
          friend class SparseSet;
 
-         _Key* m_densePtr;
-         _Value* m_sparsePtr;
+         Key* m_densePtr;
+         Value* m_sparsePtr;
       };
 
       using ConstIterator = const Iterator;
 
-      using InvalidValue = std::numeric_limits<_Value>::value;
+      using InvalidValue = std::numeric_limits<Value>::value;
 
       explicit SparseSet(size_t initialCapacity = SPARSE_BUCKET_SIZE, float growFactor = 2) :
-         m_entityAllocator(_KeyAlloc()),
-         m_bucketAllocator(_BucketAlloc),
+         m_entityAllocator(KeyAlloc()),
+         m_bucketAllocator(BucketAlloc),
          m_size(0),
          m_capacity(initialCapacity),
          m_growFactor(growFactor)
@@ -279,30 +287,38 @@ namespace Symphony
       {
          for (auto& [_, bucket] : m_sparse)
          {
-            bucket->~Bucket();
-            bucket->Deallocate(&m_bucketAllocator);
+            if (bucket)
+            {
+               bucket->~Bucket();
+               bucket->Deallocate(&m_bucketAllocator);
+            }
          }
          m_sparse.clear();
          m_entityAllocator.deallocate(m_dense, m_capacity);
       }
 
-      _Value operator[](_Key key) { return Get(key); }
-      const _Value operator[](_Key key) const { return Get(key); }
+      Value operator[](Key key) { return Get(key); }
+      const Value operator[](Key key) const { return Get(key); }
 
-      size_t Insert(_Key entity, _Value value)
+      size_t Insert(Key entity, Value value)
       {
          auto [bucketIndex, offset] = GetBucketIndexAndOffset(entity);
          Bucket* bucket = GetOrCreateBucket(bucketIndex);
-         if (bucket->Contains(offset)) return bucket->Value(offset).value_or(-1);
+         if (!bucket)
+            return m_size;
+         if (bucket->Contains(offset))
+            return bucket->Value(offset).value_or(-1);
 
          // Create new bucket and distribute selected buckets elements
          if (bucket->Size() >= SPARSE_BUCKET_SIZE)
          {
             Bucket* newBucket = GetOrCreateBucket(bucketIndex + 1);
-            bucket->Distribute(*newBucket);
+            if (newBucket)
+               bucket->Distribute(*newBucket);
          }
 
-         if (m_size == m_capacity) Resize(m_capacity * m_growFactor);
+         if (m_size == m_capacity)
+            Resize(m_capacity * m_growFactor);
 
          m_dense[m_size] = entity;
          bucket->Insert(offset, value);
@@ -310,42 +326,50 @@ namespace Symphony
          return m_size++;
       }
 
-      [[nodiscard]] _Value Get(_Key entity)
+      [[nodiscard]] Value Get(Key entity)
       {
          auto [bucketIndex, offset] = GetBucketIndexAndOffset(entity);
          auto bucketIt = m_sparse.find(bucketIndex);
-         if (bucketIt != m_sparse.end()) return bucketIt->second->Value(offset);
+         if (bucketIt && bucketIt != m_sparse.end())
+            return bucketIt->second->Value(offset);
          return InvalidValue;
       }
 
-      [[nodiscard]] const _Value Get(_Key entity) const
+      [[nodiscard]] const Value Get(Key entity) const
       {
          auto [bucketIndex, offset] = GetBucketIndexAndOffset(entity);
          auto bucketIt = m_sparse.find(bucketIndex);
-         if (bucketIt != m_sparse.end()) return bucketIt->second->Value(offset);
+         if (bucketIt && bucketIt != m_sparse.end())
+            return bucketIt->second->Value(offset);
          return InvalidValue;
       }
 
-      void Remove(_Key entity)
+      void Remove(Key entity)
       {
          auto [bucketIndex, offset] = GetBucketIndexAndOffset(entity);
          Bucket* bucket = GetOrCreateBucket(bucketIndex);
+         if (!bucket)
+            return;
 
          auto removedIndexOpt = bucket->Value(offset);
-         if (!removedIndexOpt.has_value()) return;
+         if (removedIndexOpt ==  std::nullopt)
+            return;
 
-         _Value removedIndex = removedIndexOpt.value();
+         Value removedIndex = removedIndexOpt.value();
 
          // If target entity is not last in the dense array, swap it with the last entity to maintain dense packing
          if (removedIndex != m_size - 1)
          {
-            _Key last = m_dense[m_size - 1];
+            Key last = m_dense[m_size - 1];
             m_dense[removedIndex] = last;
 
             auto [lastBucketIndex, lastOffset] = GetBucketIndexAndOffset(last);
             Bucket* lastBucket = m_sparse[lastBucketIndex];
-            lastBucket->Remove(lastOffset);
-            lastBucket->Insert(lastOffset, removedIndex);
+            if (lastBucket)
+            {
+               lastBucket->Remove(lastOffset);
+               lastBucket->Insert(lastOffset, removedIndex);
+            }
          }
 
          bucket->Remove(offset);
@@ -354,41 +378,46 @@ namespace Symphony
          if (bucket->Size() < SPARSE_BUCKET_SIZE >> 1)
          {
             auto nextBucketIter = m_sparse.find(bucketIndex + 1);
-            if (nextBucketIter != m_sparse.end())
+            if (nextBucketIter && nextBucketIter != m_sparse.end())
             {
                Bucket* nextBucket = nextBucketIter->second;
-
-               // If the combined size of the current and next bucket is within limits, merge them
-               if (bucket->Size() + nextBucket->Size() <= SPARSE_BUCKET_SIZE)
+               if (nextBucket)
                {
-                  bucket->Merge(*nextBucket);
-                  nextBucket->Destroy();
-                  m_sparse.erase(nextBucketIter);
-               } // Otherwise, rebalance
-               else
-               {
-                  bucket->Rebalance(*nextBucket);
+                  // If the combined size of the current and next bucket is within limits, merge them
+                  if (bucket->Size() + nextBucket->Size() <= SPARSE_BUCKET_SIZE)
+                  {
+                     bucket->Merge(*nextBucket);
+                     nextBucket->~Bucket();
+                     nextBucket->Deallocate(m_bucketAllocator);
+                     m_sparse.erase(nextBucketIter);
+                  } // Otherwise, rebalance
+                  else
+                  {
+                     bucket->Rebalance(*nextBucket);
+                  }
                }
             }
          }
-
          --m_size;
       }
 
-      bool Contains(_Key entity) const
+      bool Contains(Key entity) const
       {
          auto [bucketIndex, offset] = GetBucketIndexAndOffset(entity);
          auto bucketIt = m_sparse.find(bucketIndex);
-
-         return bucketIt != m_sparse.end() && bucketIt->second->Contains(offset);
+         
+         return bucketIt && bucketIt != m_sparse.end() && bucketIt->second->Contains(offset);
       }
 
       void Clear()
       {
          for (auto& [_, bucket] : m_sparse)
          {
-            bucket->~Bucket();
-            bucket->Deallocate(m_bucketAllocator);
+            if (bucket)
+            {
+               bucket->~Bucket();
+               bucket->Deallocate(m_bucketAllocator);
+            }
          }
          m_sparse.clear();
          m_size = 0;
@@ -409,19 +438,21 @@ namespace Symphony
       {
          auto [it, created] = m_sparse.try_emplace(bucketIndex, nullptr);
          if (created)
-         {
             it->second = new(m_bucketAllocator) Bucket();
-         }
          return it->second;
       }
 
-      [[nodiscard]] inline std::pair<size_t, size_t> GetBucketIndexAndOffset(_Key entity) const { return { entity >> SPARSE_BUCKET_SHIFT, entity & (SPARSE_BUCKET_SIZE - 1) }; }
+      [[nodiscard]] inline std::pair<size_t, size_t> GetBucketIndexAndOffset(Key entity) const { return { entity >> SPARSE_BUCKET_SHIFT, entity & (SPARSE_BUCKET_SIZE - 1) }; }
 
       inline void Resize(size_t newCapacity)
       {
-         if (newCapacity < m_capacity) [[unlikely]] return;
+         if (newCapacity < m_capacity) [[unlikely]]
+            return;
 
-         _Key* newDense = m_entityAllocator.allocate(newCapacity);
+         Key* newDense = m_entityAllocator.allocate(newCapacity);
+         if (!newDense)
+            return;
+
          std::move(m_dense, m_dense + m_size, newDense);
          m_entityAllocator.deallocate(m_dense, m_capacity);
          m_dense = newDense;
@@ -431,8 +462,8 @@ namespace Symphony
       EntityAllocatorType m_entityAllocator;
       BucketAllocatorType m_bucketAllocator;
 
-      _Key* m_dense;
-      std::map<_Value, Bucket*> m_sparse;
+      Key* m_dense;
+      std::map<Value, Bucket*> m_sparse;
       size_t m_size;
       size_t m_capacity;
       float m_growFactor;

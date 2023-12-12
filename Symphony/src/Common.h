@@ -4,6 +4,7 @@
 #include <type_traits>
 
 #include "Logger.h"
+#include "Util/Exception.h"
 #include "Util/YCombinator.h"
 
 #ifdef SYMPHONY_BUILD_DLL
@@ -23,9 +24,6 @@ namespace Symphony
 
    template<typename T>
    concept Component = std::is_class_v<T> && std::is_default_constructible_v<T>;
-
-   static constexpr size_t SPARSE_BUCKET_SHIFT = 10;
-   static constexpr size_t SPARSE_BUCKET_SIZE = 1 << SPARSE_BUCKET_SHIFT;
 
    template <typename Alloc>
    concept Allocator = requires(Alloc a, typename Alloc::value_type * p, size_t n)
